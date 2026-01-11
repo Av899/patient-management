@@ -1,0 +1,121 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: patient-management-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: patientdb
+      POSTGRES_USER: patientadmin
+      POSTGRES_PASSWORD: patient123
+      # Performance tuning
+      POSTGRES_INITDB_ARGS: "-E UTF8 --locale=en_US.UTF-8"
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      # Optional: Add custom PostgreSQL configuration
+      # - ./postgres/postgresql.conf:/etc/postgresql/postgresql.conf
+    networks:
+      - patient-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U patientadmin -d patientdb"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    # Resource limits for production
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+        reservations:
+          cpus: '0.5'
+          memory: 256M
+    # Logging configuration
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  patient-service:
+    build:
+      context: ./patient_service
+      dockerfile: Dockerfile
+      # Build arguments for optimization
+      args:
+        - MAVEN_OPTS=-XX:+TieredCompilation -XX:TieredStopAtLevel=1
+    image: patient-service:latest
+    container_name: patient-service
+    restart: unless-stopped
+    environment:
+      # Database configuration
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/patientdb
+      SPRING_DATASOURCE_USERNAME: patientadmin
+      SPRING_DATASOURCE_PASSWORD: patient123
+      SPRING_DATASOURCE_DRIVER_CLASS_NAME: org.postgresql.Driver
+      # JPA configuration
+      SPRING_JPA_HIBERNATE_DDL_AUTO: update
+      SPRING_JPA_DATABASE_PLATFORM: org.hibernate.dialect.PostgreSQLDialect
+      SPRING_JPA_SHOW_SQL: "false"
+      SPRING_JPA_PROPERTIES_HIBERNATE_FORMAT_SQL: "false"
+      # Connection pool optimization
+      SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE: 10
+      SPRING_DATASOURCE_HIKARI_MINIMUM_IDLE: 5
+      SPRING_DATASOURCE_HIKARI_CONNECTION_TIMEOUT: 20000
+      SPRING_DATASOURCE_HIKARI_IDLE_TIMEOUT: 300000
+      # Application settings
+      SPRING_PROFILES_ACTIVE: prod
+      SERVER_PORT: 8080
+      # Logging
+      LOGGING_LEVEL_ROOT: INFO
+      LOGGING_LEVEL_COM_PM: DEBUG
+    ports:
+      - "8081:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - patient-network
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+    # Logging configuration
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    # Health check (optional, if Dockerfile health check is not enough)
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/actuator/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+volumes:
+  postgres_data:
+    driver: local
+    # Optional: specify driver options for better performance
+    # driver_opts:
+    #   type: none
+    #   o: bind
+    #   device: /path/to/data
+
+networks:
+  patient-network:
+    driver: bridge
+    # Optional: custom network configuration
+    # ipam:
+    #   config:
+    #     - subnet: 172.20.0.0/16
